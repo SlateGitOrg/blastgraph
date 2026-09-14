@@ -2,6 +2,22 @@
 
 > Cloud IAM analysis that traverses privilege-escalation paths to crown-jewel resources instead of listing over-permissive policies.
 
+## Live deployment
+
+[![CI and deployment](https://github.com/SlateGitOrg/blastgraph/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/SlateGitOrg/blastgraph/actions/workflows/ci.yml)
+
+[Open the interactive Blast Graph demo](https://slategitorg.github.io/blastgraph/)
+
+The deployed interface uses a deterministic offline scenario to make the repository's tested decision rule visible without external services or private data.
+
+### Desktop
+
+![Blast Graph desktop deployment](docs/assets/deployed-desktop.png)
+
+### Mobile
+
+<img src="docs/assets/deployed-mobile.png" alt="Blast Graph mobile deployment" width="390">
+
 `FLAGSHIP` · **Cybersecurity** · Advanced · ~4-5 weeks · Fintech - multi-account AWS estate
 
 **Primary language:** TypeScript
