@@ -3,8 +3,6 @@ import { DatabaseSync } from 'node:sqlite';
 /**
  * Cloud IAM as a reachability problem.
  *
- * THE DIFFERENTIATOR LIVES HERE.
- *
  * Per-policy review asks "is this role over-permissive?" and every role
  * individually answers no. Meanwhile the deploy role can assume the migration
  * role, which can pass the backup role to a Lambda, which can read the KMS key
