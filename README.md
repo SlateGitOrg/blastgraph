@@ -1,148 +1,135 @@
 # blastgraph
 
-> Cloud IAM analysis that traverses privilege-escalation paths to crown-jewel resources instead of listing over-permissive policies.
-
-## Live deployment
+Cloud IAM analysis that finds multi-hop privilege-escalation paths to crown-jewel resources and tells you which single permission to remove to break the most of them.
 
 [![CI and deployment](https://github.com/SlateGitOrg/blastgraph/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/SlateGitOrg/blastgraph/actions/workflows/ci.yml)
-
-[Open the working Blast Graph application](https://slategitorg.github.io/blastgraph/)
-
-This deployed application runs the project's decision workflow in the browser. Change the inputs, run the analysis, and inspect the computed metrics and decision trace.
-
-### Desktop
+[Live demo](https://slategitorg.github.io/blastgraph/)
 
 ![Blast Graph desktop deployment](docs/assets/deployed-desktop.png)
 
-### Mobile
+## Why
 
-<img src="docs/assets/deployed-mobile.png" alt="Blast Graph mobile deployment" width="390">
+Reviewing IAM one policy at a time misses how breaches actually escalate. A deploy role can assume a CI role, which can assume a migration role, which can reach the customer database. Each role looks fine on its own, so a per-policy audit reports nothing, yet the estate is a few hops from its most sensitive data.
 
-`FLAGSHIP` · **Cybersecurity** · Advanced · ~4-5 weeks · Fintech - multi-account AWS estate
+blastgraph models the estate as a directed graph of privilege edges and asks a reachability question instead: starting from a given principal, which tagged crown jewels can be reached, through which exact API calls, and which single edge removal eliminates the most paths.
 
-**Primary language:** TypeScript
-**Tags:** `iam`, `graph-analysis`, `duckdb`, `recursive-sql`, `cloud-security`, `terraform`
+## Features
 
----
+- Principal, edge and crown-jewel model with typed edges (`ASSUME_ROLE`, `PASS_ROLE`, `DECRYPT`, `READ_SECRET`, `READ_DATA`, ...).
+- Condition-aware pruning: edges gated on `aws:SourceVpc` or MFA, or excluded by a permission boundary, are removed for the attacker context, and the reason is recorded on the edge.
+- Transitive reachability as a single recursive SQL query, with a per-path cycle guard and a hop limit.
+- Each path is reported as the ordered list of API calls an attacker would make.
+- Counterfactual ranking: disable each viable edge in turn, recompute, and rank edges by paths eliminated.
+- A browser explorer (`site/`) that runs a path search and edge ranking on inputs you edit.
 
-## The problem
+## Architecture
 
-A reviewer looks at a role and concludes it is fine. But that role can assume a second role, which can pass a third to a Lambda, which can read the KMS key that decrypts the customer database. No single-policy review finds that path - and this is how most cloud breaches actually escalate. The estate passes every audit and is still four hops from disaster.
-
-## ⭐ The differentiator
-
-Builds a **directed privilege graph and computes transitive escalation reachability to labelled crown-jewel resources**, evaluating condition keys and permission boundaries rather than producing a flat list of over-permissive policies. It reports each path with the **specific action sequence**, making it an incident-prevention artefact rather than a findings count. It also answers the counterfactual nobody else does: which single edge removal kills the most paths.
-
-This is the sentence to lead with when someone asks you to walk through the
-project. Everything else in this repo exists to make it true and to prove it.
-
-## Data
-
-A Terraform-defined lab estate on **LocalStack** (free, offline) producing realistic multi-account IAM, plus public AWS policy corpora. **Planted escalation paths of known length** make reachability recall a measured number rather than a claim.
-
-> No paid API key is required to run or demo this project. Where a paid
-> service would add value it is wired as an optional enhancement behind an
-> interface with an offline mock as the default implementation.
-
-## Stack
-
-- TypeScript
-- DuckDB (recursive CTEs do the reachability - the SQL is the interesting artefact)
-- LocalStack + Terraform for the lab estate
-- Vitest
-
-## Core capabilities
-
-- IAM ingestion normalised into a principal / action / resource edge model
-- Condition-key and permission-boundary evaluation that prunes non-viable edges
-- Recursive reachability queries producing ranked paths to tagged crown jewels
-- Counterfactual mode: recompute reachability with any edge removed, ranked by paths eliminated
-- Path explorer showing the exact CLI sequence an attacker would run
-
-## Repository layout
-
-```
-src/ingest/
-src/graph/
-sql/                      # reachability.sql - the core of the project
-lab/terraform/
-test/paths/
-docs/
+```mermaid
+flowchart LR
+  E["estate.ts<br/>principals + edges"] --> L["load()<br/>edgeViable() per edge"]
+  C["Context<br/>source VPC, MFA"] --> L
+  L --> D[("in-memory SQLite<br/>principal, edge")]
+  D --> R["pathsToCrownJewels()<br/>recursive CTE"]
+  R --> P["ranked paths<br/>with API call sequence"]
+  D --> K["rankRemediations()<br/>disable one edge, re-run"]
+  R --> K
+  K --> F["edges ranked by<br/>paths eliminated"]
 ```
 
-## Build plan
+Edges are loaded into an in-memory SQLite database (`node:sqlite`). When an edge is loaded, `edgeViable` checks its permission boundary and condition keys against the attacker context and stores `viable = 0` plus a `pruned_by` explanation when the edge cannot be used. Reachability walks only viable edges. Remediation ranking toggles the `viable` flag on one edge at a time and recounts paths.
 
-1. Build the lab estate with planted paths first and write down every path you planted.
-2. Get the edge model right - condition keys are where naive tools produce fiction.
-3. Recursive reachability in SQL. Resist doing it in application code; the SQL is more defensible and faster.
-4. Counterfactual analysis last - it is what turns findings into a remediation plan.
+## Quick start
 
-## Testing strategy
-
-Assert **100% recall on planted paths** and report the false-path rate honestly. Assert boundary conditions correctly prune edges: a policy allowed only from a specific VPC must not produce a path from outside it - the false positive that destroys trust in this class of tool.
-
-Tests assert **correctness**, not merely that the code runs. A green suite on
-this repo is a claim about behaviour under adversarial conditions; treat any
-test that would pass against a deliberately broken implementation as a bug in
-the test.
-
-## Quality & safety layer
-
-A documented threat model stating initial-access assumptions and explicit non-coverage (data-plane paths, resource policies outside the modelled set). The tool reads configuration only; it never attempts an escalation.
-
-## Measurable outcome
-
-> Finds all 18 planted escalation paths, including three of length four or more that per-policy review misses, and names the single edge removal that eliminates the most paths.
-
-State it in these terms — business units, not technical ones — in your CV
-bullet and in the first thirty seconds of describing the project.
-
-## Interview questions this project answers
-
-- **Walk me through a privilege-escalation chain in AWS IAM.**
-- **Why is per-policy review insufficient?**
-- **How do permission boundaries change reachability?**
-
-## What this deliberately is *not*
-
-- Not an exploitation tool. It computes reachability from configuration; it does not attempt any action.
-- Not a CSPM replacement - it does one analysis the CSPM tools do badly.
-
-
-## Run it now
+Prerequisite: Node.js 22.18 or newer (24 recommended). TypeScript runs through Node's built-in type stripping and the database is `node:sqlite`, so there is no build step and no dependencies to install.
 
 ```bash
-npm test        # runs the suite; no install step needed
-npm run demo    # the 60-second artefact
-```
-
-Requires Node 22.6+ (24 recommended). TypeScript runs natively via
-type stripping - there is no build step and no `node_modules`.
-
-## Getting started
-
-```bash
-git clone <your-fork-url> blastgraph
+git clone https://github.com/SlateGitOrg/blastgraph
 cd blastgraph
-docker compose up -d          # LocalStack
-terraform -chdir=lab/terraform apply -auto-approve
-npm install
-npm run ingest
-npm run paths -- --to tag:crown-jewel
-npm run test:paths            # recall against planted ground truth
+npm test        # unit tests for the engine and the site logic
+npm run demo    # run the analysis on the sample estate
 ```
 
-Docker is supported but optional — every path above works on a plain
-Windows/macOS/Linux laptop without a cloud account.
+To open the explorer locally, serve the `site/` directory, for example `python3 -m http.server -d site 8000`, and visit http://localhost:8000.
 
-## Definition of done
+## Example
 
-- [ ] The differentiator above is implemented, and a test proves it
-- [ ] The measurable outcome is produced by a command anyone can run
-- [ ] `README` explains the one decision a generic version gets wrong
-- [ ] CI runs the full suite on every push and is green on `main`
-- [ ] A recruiter can see the headline artefact in under 60 seconds
+`npm run demo` analyses the sample estate (14 principals, 19 privilege edges, 3 crown jewels) for an attacker holding `user:contractor` credentials from outside the corporate VPC and without MFA. Trimmed output:
 
-## Licence
+```text
+  What reachability reports: 6 paths to crown jewels
+
+  [3 hops] resource:secrets-payments
+      1. sts:AssumeRole role/dev-deploy
+      2. iam:PassRole -> lambda:UpdateFunctionCode lambda-etl
+      3. secretsmanager:GetSecretValue payments
+
+  [4 hops] resource:rds-customers
+      1. sts:AssumeRole role/dev-deploy
+      2. sts:AssumeRole role/ci-runner
+      3. sts:AssumeRole role/backup
+      4. rds:CreateDBSnapshot customers
+
+  Edges pruned as non-viable in this context (NOT reported as paths):
+    user:analyst -> role:migration
+      requires aws:SourceVpc=vpc-corp
+    user:analyst -> role:backup
+      requires MFA
+    role:readonly-audit -> service:lambda-etl
+      permission boundary excludes PASS_ROLE
+
+  Single-edge removals, ranked by paths eliminated:
+     6/6 (100%)  user:contractor -> role:dev-deploy
+     4/6 ( 67%)  role:dev-deploy -> role:ci-runner
+     2/6 ( 33%)  role:dev-deploy -> service:lambda-etl
+```
+
+## How it works
+
+- **Viability.** A permission boundary on the source principal caps which edge kinds it may use. `aws:SourceVpc` must equal the attacker's VPC, and an MFA-gated edge is usable only when MFA is present. Pruned edges are kept in the table with the reason, so a reviewer can disagree with a decision.
+- **Reachability.** The recursive CTE starts at the chosen principal and joins viable edges, accumulating the node path and the action list. It refuses to revisit a node already on the path, because IAM graphs contain cycles (two roles that can assume each other is a common misconfiguration) and without the guard the recursion would not terminate. `maxHops` (default 8) bounds the search.
+- **Remediation ranking.** `rankRemediations` returns a ranked list rather than a single winner because the top edge is usually the attacker's own entry hop. That is correct but not an actionable fix, so the rows below it are the structural changes a platform team can make.
+- **Ground truth.** The sample estate records the six planted escalation paths in `src/estate.ts`, and the tests assert that every one is found.
+
+See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for design decisions and failure modes.
+
+## Testing
+
+```bash
+npm test
+```
+
+The suite uses `node:test` and covers:
+
+- recall of every planted path, and a bound on unplanted paths;
+- paths of four or more hops, ordering by length, and the API call sequence on each path;
+- pruning by VPC condition, MFA condition and permission boundary, including the recorded reason;
+- cycle handling, the hop limit, principals with no outbound edges, and non-crown-jewel targets;
+- remediation ranking, including that the recommended removal reduces reachability;
+- the browser explorer's computation (`site/core.test.mjs`).
+
+CI runs the same tests, validates the site with `scripts/validate_site.py`, and deploys `site/` to GitHub Pages.
+
+## Project layout
+
+```text
+src/
+  graph.ts        schema, edge viability, recursive reachability, remediation ranking
+  estate.ts       sample estate and the planted ground-truth paths
+  demo.ts         command-line walkthrough (npm run demo)
+tests/            engine tests
+site/             browser explorer, deployed to GitHub Pages
+scripts/          site validation
+docs/             architecture notes and screenshots
+```
+
+## Limitations
+
+- It reads a modelled estate. It does not ingest live AWS accounts or Terraform state, and it never attempts an escalation.
+- Edges and conditions are limited to the kinds in `graph.ts`. Resource policies, data-plane paths and other condition keys are out of scope.
+- The sample estate is small and hand-built, so recall figures describe that estate, not real accounts.
+- The browser explorer uses its own simplified edge format and does not evaluate conditions or boundaries.
+- `node:sqlite` and type stripping are experimental in Node and print warnings.
+
+## License
 
 MIT — see [LICENSE](LICENSE).
